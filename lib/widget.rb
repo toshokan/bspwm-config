@@ -1,37 +1,43 @@
 # -*- coding: utf-8 -*-
 
+# Represents an abstract Widget
 class Widget
+  # Allow access to callback procs
+  attr_accessor :mark_dirty, :colour_query
   @str = nil
   @parent = nil
   @tag = nil
-  
+
+  # Launches the widget by calling +task+ in a new thread
   def run
     Thread.new do
       task
     end
   end
 
+  # This method does the work of building up +@str+ with output to display.
   def task
   end
   
+  # Returns +@str+. This is a standalone to allow for overrides in special cases.
+  # Overriding this might be useful for more advanced caching.
   def read
     @str
   end
-  
-  def set_parent(bar_format, tag)
-    @parent = bar_format
-    @tag = tag
-  end
 
+  # Calls the +mark_dirty+ proc to signal to the parent BarFormat that there is new output
   def signal_parent
-    @parent.mark_dirty(@tag)
+    mark_dirty.call()
   end
-
+  
+  # Writes +str+ to +@str+ object and calls +signal_parent()+
   def update(str)
     @str = str
     signal_parent
   end
 
+  # Generates {LemonBar}[https://github.com/LemonBoy/bar] markup.
+  # +params[:click]+ defines a command to run if we want a clickable area
   def markup(data, fg_colour, bg_colour, params = {})
     if params[:click].nil?
       "%{F#{fg_colour}}%{B#{bg_colour}} #{data} %{B-}%{F-}"
@@ -39,43 +45,48 @@ class Widget
       "%{F#{fg_colour}}%{B#{bg_colour}}%{A:#{params[:click]}:} #{data} %{A}%{B-}%{F-}"
     end
   end
-
+  
+  # Generates non-clickable area with standard foreground and background
   def default_markup(data, params = {})
     markup(data, get_colour(:SYS_FG), get_colour(:SYS_BG), params)
   end
-
-  def bar_config
-    @parent.bar_config
-  end
-
+  
+  # Calls the +colour_query+ proc to ask the parent BarFormat for a colour code
   def get_colour(colour_name)
-    @parent.bar_config.colours[colour_name]
+    colour_query.call(colour_name)
   end
 end
 
+# A widget displaying a clock
 class ClockWidget < Widget
+  # +format+ is a standard +Time+ format string as passed to +Time.strftime+
   def initialize(format = '%d %b %H:%M')
     @format = format
   end
-  
+
+  # Worker
   def task
     loop do
       @str = default_markup(Time.new.strftime(@format), click: 'notify-send "`cal`"')
       signal_parent
-      sleep 1
+      sleep 5
     end
   end
 end
 
+# A widget displaying ALSA volume
 class VolumeWidget < Widget
+  # +input+ is the ALSA control
   def initialize(input = 'Master')
     @input = input
   end
 
+  # Worker
   def task
     loop do
       amixerstr = `amixer get #{@input}`
       volume = /[0-9]+%/.match(amixerstr)[0].chomp('%')
+      # Display 'M' if muted
       if(amixerstr.include? "[on]")
         volume += '%'
       else
@@ -83,12 +94,15 @@ class VolumeWidget < Widget
       end
       @str = default_markup(volume)
       signal_parent
-      sleep 1
+      sleep 2
     end
   end
 end
 
+# A widget displaying active window title
+# Uses {baskerville/xtitle}[https://github.com/baskerville/xtitle]
 class WindowTitleWidget < Widget
+  # Worker
   def task
     IO.popen('xtitle -s -t 150') do |io|
       io.each_line do |title|
@@ -99,15 +113,19 @@ class WindowTitleWidget < Widget
   end
 end
 
+# A widget displaying network traffic on the currently active of two interfaces
 class NetworkWidget < Widget
+  # Takes a list of interface names, in order of display priority
   def initialize(*interfaces)
     @iface0, @iface1 = interfaces
   end
 
+  # Queries +sysfs+ to determine if interfaces is up
   def up?(iface)
     File.read("/sys/class/net/#{iface}/carrier").chomp() == '1'
   end
 
+  # Queries +sysfs+ to determine traffic in the next 1 second
   def traffic(iface)
     fstr = lambda { |qx| "/sys/class/net/#{iface}/statistics/#{qx}_bytes" }
 
@@ -123,6 +141,7 @@ class NetworkWidget < Widget
     return "#{rx_net}↓↑#{tx_net}"
   end
 
+  # Worker
   def task
     loop do
       if not up?(@iface0) and not up?(@iface1)
@@ -137,11 +156,14 @@ class NetworkWidget < Widget
   end
 end
 
+# A widget displaying battery percentage.
 class BatteryWidget < Widget
+  # +battery+ is the battery name, as in +sysfs+
   def initialize(battery = 'BAT0')
     @battery = battery
   end
 
+  # Worker
   def task
     battery_sys_fs = "/sys/class/power_supply/#{@battery}/"
     loop do
@@ -168,7 +190,10 @@ class BatteryWidget < Widget
   end
 end
 
+# A widget displaying Bspwm monitor/desktop state
+# Queries {+bspc+}[https://github.com/baskerville/bspwm]
 class BspcReportListenerWidget < Widget
+  # Worker
   def task
     IO.popen('bspc subscribe report') do |io|
       io.each_line do |report|
@@ -179,6 +204,7 @@ class BspcReportListenerWidget < Widget
     end
   end
 
+  # Process raw report string by monitor
   def process_report(report)
     # Split into monitors
     # Drop separators
@@ -195,6 +221,8 @@ class BspcReportListenerWidget < Widget
     end
   end
 
+  # Generates {LemonBar}[https://github.com/LemonBoy/bar] markup for the given monitor
+  # +next_index+ is the index to assign the first desktop. This is used to generate clickable buttons with multiple monitors
   def process_monitor(monitor, next_index)
     monitor = monitor.split(':')
     monitor_name = process_monitor_name(monitor[0])
@@ -204,6 +232,7 @@ class BspcReportListenerWidget < Widget
     monitor_name + monitor_content.join
   end
 
+  # Markup monitor name based on focus
   def process_monitor_name(element)
     name = element[1..-1]
     case element
@@ -219,6 +248,7 @@ class BspcReportListenerWidget < Widget
     markup(name, fg, bg, click: "bspc monitor -f #{name}")
   end
 
+  # Markup desktop based on focus
   def process_report_element(element, index)
     name = element[1..-1]
     case element
