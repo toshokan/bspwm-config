@@ -11,18 +11,10 @@ Process.setproctitle("ruby-bar")
 
 bar_config = BarConfig.new(colour_file: '/home/toshokan/.Xresources.d/bar-colours.json')
 
-# Dispatch formatter function that accepts a number of monitors, a widget hash, and a pipe to write output to.
-def format_fn(monitors, w, p)
-  inner_fm = lambda { |m| "%{l}#{w[:bspc][m] unless w[:bspc].nil?}%{c}#{w[:title]}%{r}#{w[:net]} | #{w[:batt]} | #{w[:vol]} | #{w[:sys]}" }
-  str = ""
-  monitors.times do |i|
-    str += if(i != 0) then "%{S+}" else "" end
-    str += inner_fm.call(i)
-  end
-  p.puts str
-end
+# Formatter should accept a widget hash and a monitor number
+format = lambda { |w,m| "%{l}#{w[:bspc][m] unless w[:bspc].nil?}%{c}#{w[:title]}%{r}#{w[:net]} | #{w[:batt]} | #{w[:vol]} | #{w[:sys]}" }
 
-lemonbar_format = LemonBarFormat.new(method(:format_fn).curry.call(MultiMonitorUtils::get_num_monitors),
+lemonbar_format = LemonBarFormat.new(MultiMonitorUtils::gen_format_fn(format),
                                      bar_config,
                                      bspc: BspcReportListenerWidget.new,
                                      title: WindowTitleWidget.new,
